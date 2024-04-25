@@ -68,7 +68,7 @@ def add_artifacts(signal_array, scan_parameters):
     return signal_array
 
 def main():
-    data_dict = load_data("resources/BrainHighResolution.mat")
+    data_dict = load_data("resources/BrainHighResolution.mat") #This functions loads the anatomical model from the .mat file and returns a dictionary of the data contained in the anatomical model. The 16 data fields contained in data_dict are described in https://mrilab.sourceforge.net/manual/MRiLab_User_Guide_v1_3/MRiLab_User_Guidech3.html#x8-120003.1
 
     print(data_dict.keys()) 
 
@@ -78,7 +78,7 @@ def main():
     plt.figure()
     plt.imshow(model.T1map[:, :, 90], cmap='gray')
     plt.title("Model")
-    plt.show(block=False) # This will display the image without blocking the execution of subsequent code (otherwise you would have to close the image before the code continues to run)
+    plt.show() # TYou will need to close the image before the rest of the code executes. 
 
     # Play around with the code to view the rest of the data. Think about the following: which anatomical direction (e.g. from left to right/right to left, top to bottom/bottom to top, front to back/back to front) do the x, y and z axes correspond to?
     
@@ -95,7 +95,7 @@ def main():
     plt.figure()
     plt.imshow(simulated_image[:, :, 90], cmap='gray')
     plt.title("Simulated Image")
-    plt.show(block=False)
+    plt.show()
 
     # Play around with the code to view the rest of the simulated image. What if you want to view a coronal or sagittal slice of the simulated image? You could also try simulating the image with different scan parameters. Try to generate a T1-weighted image, a T2-weighted image, a proton density-weighted image, etc. 
 
