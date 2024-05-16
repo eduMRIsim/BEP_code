@@ -1,10 +1,10 @@
 import numpy as np
 from scipy.io import loadmat
 from scipy import ndimage
-from sklearn.preprocessing import MinMaxScaler
+#from sklearn.preprocessing import MinMaxScaler
 import matplotlib.pyplot as plt
 from model import Model
-from PIL import Image
+#from PIL import Image
 
 def load_data(path_to_data):
     '''Load the data from the .mat file and return a dictionary of the fields in the .mat file. The .mat file contains a 1x1 struct called VObj (stands for Virtual Object). VObj contains the 16 fields described in https://mrilab.sourceforge.net/manual/MRiLab_User_Guide_v1_3/MRiLab_User_Guidech3.html#x8-120003.1
@@ -87,7 +87,9 @@ def main():
 
     print(data_dict.keys()) 
 
-    model = Model("BrainHighResolution", data_dict["T1"], data_dict["T2"], data_dict["T2Star"], data_dict["Rho"])
+    model = Model("BrainHighResolution", data_dict["T1"], data_dict["T2"], data_dict["T2Star"], data_dict["Rho"], 
+                  data_dict['XDim'], data_dict['YDim'], data_dict['ZDim'],
+                  data_dict['XDimRes'], data_dict['YDimRes'], data_dict['ZDimRes'])
 
     # You can view a transverse slice of the T1 map by using the following code:
    
@@ -191,7 +193,6 @@ def translated_image(slice_nr, tx = 0, ty = 0):
 def rotated_image(slice_nr, angle = 0):
      
     model, simulated_image = main()
-    scaler = MinMaxScaler()
     
     image = simulated_image[:, :, slice_nr]
 
@@ -237,24 +238,44 @@ def rotation_loop(slice_nr, n):
         plt.title("Simulated Image")
         plt.show()
 
-def fr_translation_loop(slice_nr, n):
+def fr_translation_loop(slice_nr, slice_type, direction, n):
     
+    m = abs(n)+1
     model, simulated_image = main()
     
-    image = simulated_image[:, :, slice_nr]
+    if slice_type == 'trans':  
+        image = simulated_image[:, :, slice_nr]
+    elif slice_type == 'sag':
+        image = simulated_image[:, slice_nr, :].swapaxes(-2,-1)[...,::-1]
+    else:
+        raise Exception("No valid slice direction was chosen.")
+        
     N, M = image.shape
     
-    tx = 0
     i = 0
-    comp_fr_image = np.zeros_like(image)
+    step = int(N/m)
+    ft_org = calculate_2dft(image)
+    comp_fr_image = np.zeros_like(ft_org)
     
-    for ty in range(n):
+    for p in range(m):
+        if n < 0:
+            p *= -1
+            
+        if direction == 'x':
+            tx = p
+            ty = 0
+        elif direction == 'y':
+            tx = 0
+            ty = p
+        else: 
+            raise Exception("No valid translation direction was chosen.")
+            
         image_translated = np.zeros_like(image)
         image_translated[max(ty,0):N+min(ty,0), max(tx,0):M+min(tx,0)] = image[-min(ty,0):N-max(ty,0),-min(tx,0):M-max(tx,0)]  
 
         ft = calculate_2dft(image_translated)
-        comp_fr_image[i:i+6,:] = ft[i:i+6,:]
-        i += 6 
+        comp_fr_image[i:i+step,:] = ft[i:i+step,:]
+        i += step 
         
         fig, ax = plt.subplots(1,3,figsize=(10,30))
         ax[0].imshow(image_translated, cmap='gray')
@@ -266,23 +287,40 @@ def fr_translation_loop(slice_nr, n):
         ax[2].imshow(calculate_2dift(comp_fr_image), cmap='gray')
         ax[2].set_title("Inverse Fourier Transform")
         plt.show()
-        
-def fr_rotation_loop(slice_nr, n):
     
+    YDimRes = model.Y_dim_res[0][0]
+    print('Translation: {0:.2f} cm'.format(p * YDimRes * 100))
+        
+        
+def fr_rotation_loop(slice_nr, slice_type, n):
+    
+    m = abs(n)+1
     model, simulated_image = main()
     
-    image = simulated_image[:, :, slice_nr]
-    i = 0
-    comp_fr_image = np.zeros_like(image)
+    if slice_type == 'trans':  
+        image = simulated_image[:, :, slice_nr]
+    elif slice_type == 'sag':
+        image = simulated_image[:, slice_nr, :].swapaxes(-2,-1)[...,::-1]
+    else:
+        raise Exception("No valid slice direction was chosen.")
     
-    for angle in range(n):
-        step = int(216/n)
+    N, M = image.shape
+    step = int(N/m)
+    i = 0
+    ft_org = calculate_2dft(image)
+    comp_fr_image = np.zeros_like(ft_org)
+    
+    for angle in range(m):
+        if n < 0:
+            angle *= -1
+            
         image_rotated = ndimage.rotate(image, angle, reshape=False)
         image_rotated[image_rotated < image.min()] = image.min()
         image_rotated[image_rotated > image.max()] = image.max()
 
         ft = calculate_2dft(image_rotated)
         comp_fr_image[i:i+step,:] = ft[i:i+step,:]
+        
         i += step
         
         fig, ax = plt.subplots(1,3,figsize=(10,30))
@@ -295,26 +333,76 @@ def fr_rotation_loop(slice_nr, n):
         ax[2].imshow(calculate_2dift(comp_fr_image), cmap='gray')
         ax[2].set_title("Inverse Fourier Transform")
         plt.show()
-
-def fr_trans_rot_loop(slice_nr, n):
     
+    print('Rotation: {0:.2f} degrees'.format(angle))
+
+def mask(slice_nr, n):
     model, simulated_image = main()
     
     image = simulated_image[:, :, slice_nr]
+    #image = simulated_image[:, slice_nr, :].swapaxes(-2,-1)[...,::-1]
+    
     N, M = image.shape
     i = 0
-    tx = 0
-    image_translated = np.zeros_like(image)
-    comp_fr_image = np.zeros_like(image)
+    step = int(N/n)
+    crop = np.zeros_like(image)
+    for k in range(n):
+        mask = np.zeros_like(image)
+        mask[i:i+step,:] = 1
+        i += step
+        imgslice = mask*image
+        crop += imgslice
+        
+        fig, ax = plt.subplots(1,3,figsize=(10,30))
+        ax[0].imshow(image, cmap='gray')
+        ax[0].set_title("Simulated image")
+            
+        ax[1].imshow(mask, cmap='gray')
+        ax[1].set_title("Mask")
+        
+        ax[2].imshow(crop, cmap='gray')
+        ax[2].set_title("Masked image")
+        plt.show()
+
+def fr_trans_rot_loop(slice_nr, slice_type, direction, n):
     
-    for angle in range(n):
-        ty = angle
-        image_rotated = ndimage.rotate(image, angle, order = 0, reshape=False)
+    m = abs(n)+1
+    model, simulated_image = main()
+    
+    if slice_type == 'trans':  
+        image = simulated_image[:, :, slice_nr]
+    elif slice_type == 'sag':
+        image = simulated_image[:, slice_nr, :].swapaxes(-2,-1)[...,::-1]
+    else:
+        raise Exception("No valid slice direction was chosen.")
+        
+    N, M = image.shape
+    
+    i = 0
+    step = int(N/m)
+    ft_org = calculate_2dft(image)
+    comp_fr_image = np.zeros_like(ft_org)
+    image_translated = np.zeros_like(image)
+    
+    for p in range(m):
+        if n < 0:
+            p *= -1
+            
+        if direction == 'x':
+            tx = p
+            ty = 0
+        elif direction == 'y':
+            tx = 0
+            ty = p
+        else: 
+            raise Exception("No valid translation direction was chosen.")
+            
+        image_rotated = ndimage.rotate(image, p, order = 0, reshape=False)
         image_translated[max(ty,0):N+min(ty,0), max(tx,0):M+min(tx,0)] = image_rotated[-min(ty,0):N-max(ty,0),-min(tx,0):M-max(tx,0)]  
         
         ft = calculate_2dft(image_translated)
-        comp_fr_image[i:i+6,:] = ft[i:i+6,:]
-        i += 6 
+        comp_fr_image[i:i+step,:] = ft[i:i+step,:]
+        i += step
         
         fig, ax = plt.subplots(1,3,figsize=(10,30))
         ax[0].imshow(image_translated, cmap='gray')
@@ -327,7 +415,7 @@ def fr_trans_rot_loop(slice_nr, n):
         ax[2].set_title("Inverse Fourier Transform")
         plt.show()
 
-fr_rotation_loop(100,36)
+fr_rotation_loop(100,'sag',5)
 
 # if __name__ == "__main__":
 #     main()
