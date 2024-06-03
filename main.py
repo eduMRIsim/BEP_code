@@ -250,7 +250,7 @@ def rotation_loop(slice_nr, n):
         plt.title("Simulated Image")
         plt.show()
 
-def fr_plot(moved_image,fr_image):
+def fr_plot(moved_image,fr_image, inv_fr_image):
     
     fig, ax = plt.subplots(1,3,figsize=(10,30))
     ax[0].imshow(moved_image, cmap='gray')
@@ -259,16 +259,11 @@ def fr_plot(moved_image,fr_image):
     ax[1].imshow(np.log(abs(fr_image)), cmap='gray')
     ax[1].set_title("Fourier Transform")
         
-    ax[2].imshow(calculate_2dift(fr_image), cmap='gray')
+    ax[2].imshow(inv_fr_image, cmap='gray')
     ax[2].set_title("Inverse Fourier Transform")
     plt.show()
 
-def abrupt_translation(slice_nr, slice_type, x, y):
-    
-    if y == 0:
-        n = abs(x) + 1
-    else:
-        n = abs(y) + 1
+def abrupt_translation(slice_nr, slice_type, speed, angle):
     
     model, simulated_image, pars = main()
     
@@ -282,15 +277,32 @@ def abrupt_translation(slice_nr, slice_type, x, y):
     N, M = image.shape
     
     i = 0
-    step = int(N/n)
-    if (N % n) != 0: 
-        step += 1
+    
+    t = N * pars["TR"]
+    y = speed * np.sin(np.pi * angle/180) * t
+    x = speed * np.cos(np.pi * angle/180) * t
+    
+    if angle % 180 == 0:
+        s = abs(round(x))+1
+    else:
+        s = abs(round(y))+1
+    step = int(N/s)
+    
+    if (N % s) != 0: 
+        step += 1  
+        
+    p = y / (s-1)
+    q = x / (s-1)
         
     ft_org = calculate_2dft(image)
     comp_fr_image = np.zeros_like(ft_org)
-    image_translated = image
     
-    for a in range(n):
+    for a in range(s):
+        
+        mat_identity = np.array([[1, 0, a*p], [0, 1, a*q], [0, 0, 1]])
+        image_translated = ndimage.affine_transform(image, np.linalg.inv(mat_identity))
+        image_translated[image_translated < image.min()] = image.min()
+        image_translated[image_translated > image.max()] = image.max()
         
         ft = calculate_2dft(image_translated)
         comp_fr_image[i:i+step,:] = ft[i:i+step,:]
@@ -300,35 +312,23 @@ def abrupt_translation(slice_nr, slice_type, x, y):
         
         #image_translated = np.zeros_like(image)
         #image_translated[max(ty,0):N+min(ty,0), max(tx,0):M+min(tx,0)] = image[-min(ty,0):N-max(ty,0),-min(tx,0):M-max(tx,0)]  
-        
-        if y == 0:
-            p = 0
-            q = x/abs(x)
-        else:
-            p = y/abs(y)
-            q = x/abs(y)
-        mat_identity = np.array([[1, 0, p], [0, 1, q], [0, 0, 1]])
-        image_translated = ndimage.affine_transform(image_translated, np.linalg.inv(mat_identity))
-        image_translated[image_translated < image.min()] = image.min()
-        image_translated[image_translated > image.max()] = image.max()
 
     
     XDimRes = model.X_dim_res[0][0]
     YDimRes = model.Y_dim_res[0][0]
     
-    dx = x * XDimRes
-    dy = y * YDimRes
-    distance = np.sqrt(dx**2 + dy**2) * 100
-    t = N * pars["TR"] 
+    dx = x * XDimRes * 100
+    dy = y * YDimRes * 100
+    distance = np.sqrt(dx**2 + dy**2)  
     
-    print('Translation: {0:.2f} cm'.format(distance))
-    print('Speed: {0:.4f} cm/s'.format(distance/t))
+    print('Translation: {0:.2f} cm in x-direction, {1:.2f} cm in y-direction'.format(dx, dy))
+    print('Total translation: {0:.2f} cm'.format(distance))
+    #print('Speed: {0:.4f} cm/s'.format(distance/t))
     
         
         
-def abrupt_rotation(slice_nr, slice_type, deg):
+def abrupt_rotation(slice_nr, slice_type, speed):
     
-    m = abs(deg)+1
     model, simulated_image, pars = main()
     
     if slice_type == 'trans':  
@@ -339,18 +339,25 @@ def abrupt_rotation(slice_nr, slice_type, deg):
         raise Exception("No valid slice direction was chosen.")
     
     N, M = image.shape
-    step = int(N/m)
-    if (N % m) != 0: 
+    
+    t = N * pars["TR"] 
+    deg = speed * t
+    
+    s = abs(round(deg))+1
+    step = int(N/s)
+    
+    if (N % s) != 0: 
         step += 1
         
     i = 0
     ft_org = calculate_2dft(image)
     comp_fr_image = np.zeros_like(ft_org)
     
-    for angle in range(m):
+    for a in range(s):
         if deg < 0:
-            angle *= -1
-            
+            a *= -1
+        
+        angle = a * deg / (s-1)
         image_rotated = ndimage.rotate(image, angle, reshape=False)
         image_rotated[image_rotated < image.min()] = image.min()
         image_rotated[image_rotated > image.max()] = image.max()
@@ -361,11 +368,9 @@ def abrupt_rotation(slice_nr, slice_type, deg):
         i += step
         
         fr_plot(image_rotated,comp_fr_image)
-    
-    t = N * pars["TR"] 
 
     print('Rotation: {0:.2f} degrees'.format(angle))
-    print('Speed: {0:.4f} degrees/s'.format(angle/t))
+    #rint('Speed: {0:.4f} degrees/s'.format(angle/t))
 
 def mask(slice_nr, n):
     model, simulated_image = main()
@@ -447,7 +452,7 @@ def fr_trans_rot_loop(slice_nr, slice_type, direction, n):
         ax[2].set_title("Inverse Fourier Transform")
         plt.show()
 
-def gradual_translation(slice_nr, slice_type, x, y):
+def gradual_translation(slice_nr, slice_type, speed, angle):
       
     model, simulated_image, pars = main()
     
@@ -459,45 +464,59 @@ def gradual_translation(slice_nr, slice_type, x, y):
         raise Exception("No valid slice direction was chosen.")
         
     N, M = image.shape
-    
-    i = 0
         
     ft_org = calculate_2dft(image)
     comp_fr_image = np.zeros_like(ft_org)
-    image_translated = image
     
-    for a in range(N):
+    t = N * pars["TR"]
+    y = speed * np.sin(np.pi * angle/180) * t
+    x = speed * np.cos(np.pi * angle/180) * t
+    p = y / (N-1)
+    q = x / (N-1)
+    
+    for i in range(N):
+        
+        mat_identity = np.array([[1, 0, i*p], [0, 1, i*q], [0, 0, 1]])
+        image_translated = ndimage.affine_transform(image, np.linalg.inv(mat_identity))
+        image_translated[image_translated < image.min()] = image.min()
+        image_translated[image_translated > image.max()] = image.max()
         
         ft = calculate_2dft(image_translated)
         comp_fr_image[i:i+1,:] = ft[i:i+1,:]
-        i += 1 
+        inv_image = calculate_2dift(comp_fr_image)
         
-        fr_plot(image_translated,comp_fr_image)        
+        #fr_plot(image_translated,comp_fr_image, inv_image)  
+        
+        fig, ax = plt.subplots(2,2,figsize=(10,10))
+        ax[0,0].imshow(image_translated, cmap='gray')
+        ax[0,0].set_title("Simulated image")
+
+        ax[0,1].imshow(np.log(abs(ft)), cmap='gray')
+        ax[0,1].set_title("Fourier Transform")
+              
+        ax[1,0].imshow(np.log(abs(comp_fr_image)), cmap='gray')
+        ax[1,0].set_title("Fourier Transform")
+            
+        ax[1,1].imshow(inv_image, cmap='gray')
+        ax[1,1].set_title("Inverse Fourier Transform")
+        plt.show()
         
         #image_translated = np.zeros_like(image)
         #image_translated[max(ty,0):N+min(ty,0), max(tx,0):M+min(tx,0)] = image[-min(ty,0):N-max(ty,0),-min(tx,0):M-max(tx,0)]  
-        
-        p = y / (N-1)
-        q = x / (N-1)
-
-        mat_identity = np.array([[1, 0, p], [0, 1, q], [0, 0, 1]])
-        image_translated = ndimage.affine_transform(image_translated, np.linalg.inv(mat_identity))
-        image_translated[image_translated < image.min()] = image.min()
-        image_translated[image_translated > image.max()] = image.max()
 
     
     XDimRes = model.X_dim_res[0][0]
     YDimRes = model.Y_dim_res[0][0]
     
-    dx = x * XDimRes
-    dy = y * YDimRes
-    distance = np.sqrt(dx**2 + dy**2) * 100
-    t = N * pars["TR"] 
+    dx = x * XDimRes * 100
+    dy = y * YDimRes * 100
+    distance = np.sqrt(dx**2 + dy**2)  
     
-    print('Translation: {0:.2f} cm'.format(distance))
-    print('Speed: {0:.4f} cm/s'.format(distance/t))
+    print('Translation: {0:.2f} cm in x-direction, {1:.2f} cm in y-direction'.format(dx, dy))
+    print('Total translation: {0:.2f} cm'.format(distance))
+    #print('Speed: {0:.4f} cm/s'.format(distance/t))
 
-def gradual_rotation(slice_nr, slice_type, deg):
+def gradual_rotation(slice_nr, slice_type, speed):
 
     model, simulated_image, pars = main()
     
@@ -509,7 +528,8 @@ def gradual_rotation(slice_nr, slice_type, deg):
         raise Exception("No valid slice direction was chosen.")
     
     N, M = image.shape
-
+    t = N * pars["TR"]
+    deg = speed * t
     #i = 0
     ft_org = calculate_2dft(image)
     comp_fr_image = np.zeros_like(ft_org)
@@ -524,15 +544,15 @@ def gradual_rotation(slice_nr, slice_type, deg):
 
         ft = calculate_2dft(image_rotated)
         comp_fr_image[i:i+1,:] = ft[i:i+1,:]
-        
+        inv_image = calculate_2dift(comp_fr_image)
+        #inv_image[inv_image < image.min()] = image.min()
+        #inv_image[inv_image > image.max()] = image.max()
         #i += 1
         
-        fr_plot(image_rotated,comp_fr_image)
-    
-    t = N * pars["TR"] 
+        fr_plot(image_rotated,comp_fr_image,inv_image) 
 
     print('Rotation: {0:.2f} degrees'.format(angle))
-    print('Speed: {0:.4f} degrees/s'.format(angle/t))
+    #print('Speed: {0:.4f} degrees/s'.format(angle/t))
 
 def altered_k_border_rotation(slice_nr, slice_type, deg, begin, end):
     model, simulated_image, pars = main()
@@ -625,17 +645,9 @@ def periodic_motion(slice_nr, slice_type, direction, A, f):
           
     ft_org = calculate_2dft(image)
     comp_fr_image = np.zeros_like(ft_org)
-    image_translated = image
     
     for i in range(N):
-        
-        ft = calculate_2dft(image_translated)
-        comp_fr_image[i:i+1,:] = ft[i:i+1,:]
-        
-        fr_plot(image_translated,comp_fr_image)        
-        
-        #image_translated = np.zeros_like(image)
-        #image_translated[max(ty,0):N+min(ty,0), max(tx,0):M+min(tx,0)] = image[-min(ty,0):N-max(ty,0),-min(tx,0):M-max(tx,0)]  
+                
         harmonic = A * np.sin(2 * np.pi * f * pars["TR"] * i)
         
         if direction == 'y':
@@ -646,11 +658,18 @@ def periodic_motion(slice_nr, slice_type, direction, A, f):
             q = harmonic
 
         mat_identity = np.array([[1, 0, p], [0, 1, q], [0, 0, 1]])
+        
         image_translated = ndimage.affine_transform(image, np.linalg.inv(mat_identity))
+        #image_translated = np.zeros_like(image)
+        #image_translated[max(p,0):N+min(p,0), max(q,0):M+min(q,0)] = image[-min(p,0):N-max(p,0),-min(q,0):M-max(q,0)]  
         image_translated[image_translated < image.min()] = image.min()
         image_translated[image_translated > image.max()] = image.max()
 
-    
+        ft = calculate_2dft(image_translated)
+        comp_fr_image[i:i+1,:] = ft[i:i+1,:]
+                
+        fr_plot(image_translated,comp_fr_image) 
+        
     XDimRes = model.X_dim_res[0][0]
     YDimRes = model.Y_dim_res[0][0]
     
@@ -658,8 +677,8 @@ def periodic_motion(slice_nr, slice_type, direction, A, f):
     print('Repetitition every {0:.2f} lines'.format(1/(f*pars["TR"])))
 
    
-#periodic_motion(100,'trans','y',5,0.8)
-gradual_rotation(100, 'trans', 40)
+#periodic_motion(100,'trans','y',5,0.4)
+gradual_translation(100, 'trans', 0.0536*4, 0)
 #altered_k_centre_rotation(100,'trans',15,72,144)
 
 
